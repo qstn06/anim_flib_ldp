@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPLS : lire et construire la FLIB</title>
+<style>
+:root{
+  --tr:#e8771d;  --trl:#fde9d7;   /* label de transport (orange) */
+  --ipc:#4a5568;                  /* paquet IP (gris ardoise) */
+  --ok:#2e8b57;  --no:#a0a8b3;
+  --hl:#ffd54a;  --hll:#fff4c7;
+  --ink:#1d2430; --muted:#6b7480; --line:#9aa3ad;
+  --isp:#eef2f7; --lsr:#1f3b57;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#20242c;overflow:hidden;
+  font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+#stage{position:absolute;width:1280px;height:720px;left:50%;top:50%;background:#fff;overflow:hidden;transform-origin:center center}
+#stage.noanim *, #stage.noanim{transition:none !important;animation:none !important}
+
+/* ---------- en-tête ---------- */
+header{position:absolute;left:0;right:0;top:0;height:54px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid #e6e9ee;background:#fff;z-index:20}
+#titre{font-size:22px;font-weight:700;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sections{display:flex;gap:6px}
+#sections button{border:1px solid #d5d9df;background:#fff;border-radius:16px;padding:4px 11px;font-size:12.5px;cursor:pointer;color:var(--muted);font-family:inherit}
+#sections button.on{background:var(--lsr);color:#fff;border-color:var(--lsr)}
+#nav{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+#nav button{border:1px solid #d5d9df;background:#fff;border-radius:6px;width:30px;height:28px;cursor:pointer;font-size:14px;color:var(--ink)}
+#progress{position:absolute;left:0;bottom:0;height:4px;background:var(--tr);transition:width .3s;z-index:21}
+
+/* ---------- topologie ---------- */
+svg#topo{position:absolute;left:0;top:0;width:1280px;height:720px}
+.lnk{stroke:var(--line);stroke-width:3}
+.lnk-net{stroke:var(--line);stroke-width:1.6;stroke-dasharray:4 4}
+.lbl-lien{font-size:10.5px;fill:#59626d;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:4px}
+.lbl-cout{font-size:10.5px;fill:#8a5a00;font-weight:700;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:4px}
+.lbl-if{font-size:10px;fill:#8a929c;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:3px}
+.r-mpls circle{fill:var(--lsr)} .r-mpls text{fill:#fff}
+.r-ip circle{fill:#fff;stroke:#8a929c;stroke-width:2;stroke-dasharray:4 3} .r-ip text{fill:#59626d}
+.rt text{font-size:14px;font-weight:700;text-anchor:middle;dominant-baseline:central}
+.r-sous{font-size:10.5px;fill:#8a929c;text-anchor:middle}
+.net rect{fill:#f3f5f8;stroke:#b8c0ca;stroke-width:1.4}
+.net text{font-size:12px;text-anchor:middle;dominant-baseline:central;fill:#3c444e;font-weight:600}
+.dom rect{fill:var(--isp);stroke:#d3dbe6;stroke-width:1.5}
+.dom text{font-size:12px;fill:#7b8796;font-weight:700;letter-spacing:.06em}
+.glow{fill:none;stroke:var(--hl);stroke-width:6;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ---------- couche animée (paquet, annonces, badges) ---------- */
+#layer{position:absolute;left:0;top:0;width:1280px;height:720px;pointer-events:none;z-index:5}
+#pkt{position:absolute;left:0;top:0;transition:transform .8s cubic-bezier(.45,.05,.3,1),opacity .3s}
+#pkt .b{position:absolute;white-space:nowrap;text-align:center;border-radius:5px;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+#pkt .ipb{display:flex;height:26px;left:-75px;width:150px;overflow:hidden}
+#pkt .ipb .hd{background:var(--ipc);color:#fff;font-size:12px;font-weight:600;line-height:26px;padding:0 7px;flex:0 0 auto}
+#pkt .ipb .pl{background:#c7cdd6;flex:1;border-left:2px solid #fff}
+#pkt .lab{background:var(--tr);color:#fff;font-size:14px;font-weight:700;width:44px;height:26px;line-height:26px}
+.fx-in{animation:fxin .5s .75s both}
+@keyframes fxin{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+.fx-out{animation:fxout .6s .75s both}
+@keyframes fxout{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-20px)}}
+.badge{position:absolute;transform:translateX(-50%);padding:3px 10px;border-radius:14px;font-size:12.5px;font-weight:800;letter-spacing:.03em;color:#fff;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.badge.anim{animation:fxin2 .4s .8s both}
+@keyframes fxin2{from{opacity:0}to{opacity:1}}
+.op-push,.op-swap,.op-pop,.op-untag{background:var(--tr)} .op-ip,.op-deliver{background:var(--ipc)} .op-drop{background:#c0392b}
+.env{position:absolute;left:0;top:0;transition:transform .9s cubic-bezier(.45,.05,.3,1)}
+.env .in{transform:translate(-50%,-50%);background:#fff;border:2px solid var(--tr);border-radius:8px;padding:2px 7px;font-size:11.5px;font-weight:700;white-space:nowrap;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.2);transition:opacity .4s .9s,border-color .4s .9s}
+.env .in b{color:var(--tr)}
+.env .v{display:inline-block;margin-left:5px;font-weight:900;opacity:0;transition:opacity .3s .9s}
+.env.ok .v{opacity:1;color:var(--ok)}
+.env.no .v{opacity:1;color:#c0392b}
+.env.no .in{color:#8a929c;background:#f4f5f7;border-color:var(--no)}
+.env.no .in b{color:#8a929c}
+
+/* ---------- légende ---------- */
+#caption{position:absolute;left:24px;right:24px;top:345px;height:95px;font-size:15.5px;line-height:1.42;padding:8px 14px;border-left:5px solid var(--lsr);background:#f7f9fb;border-radius:0 8px 8px 0;overflow:hidden}
+#caption.question{border-left-color:var(--hl);background:var(--hll)}
+#caption.question::before{content:"À vous ! ";font-weight:800;color:#8a5a00}
+#caption .L,.L{display:inline-block;background:var(--tr);color:#fff;font-weight:700;border-radius:4px;padding:0 6px;line-height:1.35}
+#caption .ok{color:var(--ok);font-weight:700} #caption .no{color:#c0392b;font-weight:700}
+#caption.grand{height:auto;top:360px;font-size:17px}
+
+/* ---------- FLIB ---------- */
+#cards{position:absolute;left:0;top:452px;width:1280px;height:260px}
+.card{position:absolute;top:0;width:246px;background:#fff;border:1px solid #d5dbe3;border-radius:10px;box-shadow:0 2px 6px rgba(20,30,50,.08);overflow:hidden;transition:box-shadow .3s,border-color .3s}
+.card.act{border-color:var(--hl);box-shadow:0 0 0 3px var(--hl)}
+.card h3{margin:0;font-size:14px;padding:6px 10px;background:var(--lsr);color:#fff;display:flex;justify-content:space-between;align-items:baseline}
+.card h3 span{font-size:10.5px;font-weight:400;opacity:.8}
+.card table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}
+.card th{font-size:10px;font-weight:600;color:var(--muted);background:#f3f5f8;padding:3px 2px;line-height:1.15;border-bottom:1px solid #e3e7ec;text-align:center}
+.card td{height:46px;padding:0 2px;text-align:center;border-bottom:1px solid #eef1f4;white-space:nowrap;overflow:hidden;transition:opacity .3s,background .3s}
+.card td.lab{font-weight:700;color:#b85a0c}
+.card td.sm{font-size:10px;letter-spacing:-.02em}
+.card td.vide{color:#c9cfd6}
+.card td.rt{color:#3c444e}
+.card td.nh{font-size:12px}
+.card tr.hl td{background:var(--hll)}
+.card tr.dim td{opacity:.28}
+.card td.cel-hl{background:var(--trl) !important;box-shadow:inset 0 0 0 2px var(--tr)}
+.card td.cel-peer{box-shadow:inset 0 0 0 2px var(--tr);background:#fff}
+.card td.new{animation:flash 1.3s .7s both}
+@keyframes flash{0%{background:var(--hl)}100%{background:transparent}}
+col.c-in{width:44px} col.c-fec{width:76px} col.c-out{width:44px} col.c-nh{width:58px} col.c-if{width:24px}
+
+/* ---------- « À retenir » ---------- */
+#overlay{position:absolute;left:0;top:54px;width:1280px;height:666px;background:rgba(255,255,255,.93);z-index:15;display:none;align-items:center;justify-content:center}
+#overlay.on{display:flex}
+#overlay .box{width:960px;border:2px solid var(--lsr);border-radius:14px;background:#fff;padding:22px 34px 24px;box-shadow:0 6px 24px rgba(20,30,50,.15)}
+#overlay h2{margin:0 0 12px;font-size:26px;color:var(--lsr)}
+#overlay ul{margin:0;padding-left:22px;font-size:19px;line-height:1.5}
+#overlay li{margin:6px 0}
+#overlay .td{margin-top:14px;font-size:15px;color:var(--muted)}
+#aide{position:absolute;right:14px;bottom:8px;font-size:11px;color:#b0b7c0;z-index:2}
+</style>
+</head>
+<body>
+<div id="stage">
+  <header>
+    <h1 id="titre"></h1>
+    <div id="sections"></div>
+    <div id="nav"><button id="prev" title="Précédent (←)">◀</button><span id="cpt"></span><button id="next" title="Suivant (→ ou espace)">▶</button></div>
+  </header>
+  <svg id="topo" viewBox="0 0 1280 720"></svg>
+  <div id="caption"></div>
+  <div id="cards"></div>
+  <div id="layer"></div>
+  <div id="overlay"></div>
+  <div id="aide">← → espace : naviguer · Début/Fin</div>
+  <div id="progress"></div>
+</div>
+
+<script>
+/* ======================================================================
+   CONFIGURATION : c'est la seule partie à modifier.
+   Après modification : enregistrer, puis recharger la page (F5).
+   ====================================================================== */
+const CONFIG = {
+  titre: `MPLS : lire et construire la FLIB`,
+
+  // true  : retrait du label à l'avant-dernier saut (PHP, comportement Cisco par défaut) :
+  //         le routeur de sortie annonce « pop » (= pas de label) et son voisin a « pop » comme label sortant.
+  // false : le routeur de sortie choisit un vrai label, et c'est lui qui fait « pop ».
+  PHP: true,
+
+  // Routeur par lequel les paquets entrent dans le domaine
+  entree: `R1`,
+
+  // Routeurs : position à l'écran (x de 0 à 1280, y de 60 à 330), et MPLS activé ou non.
+  routeurs: {
+    R1: { x: 220, y: 190, mpls: true },
+    R2: { x: 440, y: 190, mpls: true },
+    R3: { x: 660, y: 125, mpls: true },
+    R5: { x: 660, y: 255, mpls: true },
+    R4: { x: 880, y: 190, mpls: true },
+    R6: { x: 1075, y: 190, mpls: false },
+  },
+
+  // Liens : [routeur A, interface de A, routeur B, interface de B, réseau, coût]
+  // Convention : le lien entre Rx et Ry a pour réseau 10.0.xy.0/24, et l'adresse de Rx
+  // sur ce lien se termine par x (R3 sur 10.0.23.0/24 → 10.0.23.3).
+  // Le coût n'est pas affiché : il sert seulement à départager deux chemins de même longueur
+  // (ici, R2 → R4 passe par R3 plutôt que par R5).
+  liens: [
+    [`R1`, `e1`, `R2`, `e0`, `10.0.12.0/24`, 1],
+    [`R2`, `e1`, `R3`, `e0`, `10.0.23.0/24`, 1],
+    [`R2`, `e2`, `R5`, `e0`, `10.0.25.0/24`, 1],
+    [`R3`, `e1`, `R4`, `e0`, `10.0.34.0/24`, 1],
+    [`R4`, `e1`, `R5`, `e1`, `10.0.45.0/24`, 2],
+    [`R4`, `e2`, `R6`, `e0`, `10.0.46.0/24`, 1],
+  ],
+
+  // Réseaux d'extrémité : préfixe, routeur auquel il est directement connecté, interface, position.
+  reseaux: {
+    A: { prefixe: `20.0.0.0/16`, routeur: `R1`, intf: `e0`, x: 90,   y: 190 },
+    N: { prefixe: `30.0.0.0/16`, routeur: `R4`, intf: `e3`, x: 960,  y: 326 },
+    M: { prefixe: `30.0.5.0/24`, routeur: `R5`, intf: `e2`, x: 540,  y: 326 },
+    E: { prefixe: `50.0.0.0/16`, routeur: `R6`, intf: `e1`, x: 1190, y: 112 },
+  },
+
+  // Préfixes affichés dans les FLIB (dans cet ordre)
+  fecs: [`N`, `M`, `E`],
+
+  // Label local choisi par chaque LSR pour chaque préfixe (valeurs arbitraires).
+  // Avec PHP: true, le label du routeur de sortie n'est pas utilisé (il annonce « pop »).
+  labels: {
+    R1: { N: 18, M: 19, E: 17 },
+    R2: { N: 24, M: 25, E: 26 },
+    R3: { N: 37, M: 38, E: 39 },
+    R5: { N: 52, M: 53, E: 54 },
+    R4: { N: 41, M: 42, E: 43 },
+  },
+};
+
+/* Déroulé. Types possibles :
+   - texte   : { titre, texte, vue: "aucune" | "flib" }
+   - paquet  : { dst, questions: [routeurs où l'on fait deviner avant de montrer] }
+   - retenir : { titre, points: [...], td }
+   - ldp-debut, ldp-labels-locaux, ldp-autres : textes générés automatiquement (texte: pour remplacer)
+   - ldp     : { fec, questions: [routeurs] }
+   « section » démarre une nouvelle partie (bouton dans l'en-tête). */
+const SCENARIO = [
+  { type: `texte`, section: `Le réseau`, titre: `Un domaine MPLS`, vue: `aucune`,
+    texte: `Cinq routeurs-commutateurs MPLS (<b>LSR</b>) : R1 à R5. R6 est un routeur ordinaire, <b>sans MPLS</b>.
+            Un protocole de routage (OSPF) tourne partout : chaque routeur connaît, pour chaque préfixe,
+            son <b>next hop</b>, c'est-à-dire le voisin à qui envoyer le paquet.` },
+  { type: `texte`, titre: `La FLIB de chaque LSR`, vue: `flib`,
+    texte: `Chaque LSR a une table de commutation MPLS, la <b>FLIB</b> : une ligne par préfixe
+            (ici 3 préfixes ; en vrai, aussi les liens internes et les loopbacks).
+            Une même ligne sert de deux façons : paquet <b>IP</b> → on cherche dans la colonne <i>FEC</i> ;
+            paquet <b>étiqueté</b> → on cherche dans la colonne <i>Label entrant</i>.` },
+
+  { type: `paquet`, section: `1 · Lire la FLIB`, dst: `30.0.1.9`, questions: [`R2`] },
+  { type: `paquet`, dst: `30.0.5.9`, questions: [`R1`] },
+  { type: `paquet`, dst: `50.0.3.7`, questions: [`R4`] },
+  { type: `retenir`, titre: `À retenir : lire une FLIB`, td: `→ TD exercice 2`,
+    points: [
+      `Paquet <b>IP</b> (entrée du domaine) : on cherche la FEC, c'est-à-dire le <b>plus long préfixe</b> correspondant (parfois aussi le champ QoS/TOS), puis <b>PUSH</b> du label sortant.`,
+      `Paquet <b>étiqueté</b> : on cherche le <b>label entrant</b>, sans lire l'adresse IP, puis <b>SWAP</b> vers le label sortant.`,
+      `Label sortant <b>pop</b> : on retire le label (avant-dernier saut). <b>untag</b> : on retire tous les labels, car le next hop ne parle pas MPLS.`,
+      `Aucune ligne pour ce label : le paquet est <b>jeté</b>.`,
+      `Seuls les routeurs d'entrée et de sortie lisent l'adresse IP ; le cœur ne lit que des labels.`,
+    ] },
+
+  { type: `ldp-debut`, section: `2 · Construire la FLIB : LDP` },
+  { type: `ldp-labels-locaux` },
+  { type: `ldp`, fec: `N`, questions: [`R2`] },
+  { type: `ldp-autres` },
+  { type: `retenir`, titre: `À retenir : construire une FLIB avec LDP`, td: `→ TD exercices 3 et 6`,
+    points: [
+      `<b>FEC, next hop, interface</b> : recopiés de la table de routage IP (OSPF…).`,
+      `<b>Label entrant</b> : choisi librement par le routeur (signification locale), puis annoncé à <b>tous</b> ses voisins.`,
+      `<b>Label sortant</b> : le label annoncé <b>par le next hop</b> pour ce préfixe. Les annonces des autres voisins sont ignorées, de même que celles pour un préfixe absent de la table de routage.`,
+      `Réseau directement connecté : le routeur annonce <b>pop</b> (« pas de label »), d'où <b>pop</b> chez le voisin. Next hop sans MPLS : <b>untag</b>.`,
+      `Les annonces remontent depuis la sortie, en sens inverse du trajet des paquets.`,
+    ] },
+];
+
+/* ======================================================================
+   MOTEUR : ne pas modifier en dessous (sauf pour changer le comportement)
+   ====================================================================== */
+const S = CONFIG;
+const RT = Object.keys(S.routeurs);
+const LSR = RT.filter(r => S.routeurs[r].mpls);
+const F = f => S.reseaux[f];
+const num = r => r.replace(/\D/g, ``);
+
+/* --- topologie et routage --- */
+const adj = {}; RT.forEach(r => adj[r] = []);
+S.liens.forEach(([a, ia, b, ib, net, c]) => {
+  adj[a].push({ v: b, intf: ia, net, c });
+  adj[b].push({ v: a, intf: ib, net, c });
+});
+const lien = (a, b) => adj[a].find(e => e.v === b);
+const ipSur = (r, net) => net.split(`/`)[0].split(`.`).slice(0, 3).join(`.`) + `.` + num(r);
+
+const NH = {};   // NH[r][d] = premier saut de r vers le routeur d
+RT.forEach(src => {
+  const dist = {}, fh = {}, vu = new Set();
+  RT.forEach(r => dist[r] = Infinity); dist[src] = 0;
+  while (vu.size < RT.length) {
+    let u = null;
+    RT.forEach(r => { if (!vu.has(r) && (u === null || dist[r] < dist[u])) u = r; });
+    if (dist[u] === Infinity) break;
+    vu.add(u);
+    adj[u].forEach(e => {
+      const nd = dist[u] + e.c;
+      if (nd < dist[e.v]) { dist[e.v] = nd; fh[e.v] = u === src ? e.v : fh[u]; }
+    });
+  }
+  NH[src] = fh;
+});
+
+const nhF = (r, f) => r === F(f).routeur ? null : NH[r][F(f).routeur];
+function inLab(r, f) {
+  if (r === F(f).routeur && S.PHP) return `pop`;
+  return S.labels[r][f];
+}
+function outLab(r, f) {
+  const e = F(f).routeur;
+  if (r === e) return S.PHP ? `—` : `pop`;
+  const n = nhF(r, f);
+  if (!S.routeurs[n].mpls) return `untag`;
+  if (S.PHP && n === e) return `pop`;
+  return S.labels[n][f];
+}
+const nhIP = (r, f) => { const n = nhF(r, f); return n ? ipSur(n, lien(r, n).net) : `connecté`; };
+const intfF = (r, f) => { const n = nhF(r, f); return n ? lien(r, n).intf : F(f).intf; };
+const annonce = l => l;   // ce que le voisin met en label sortant
+
+/* --- adresses --- */
+const ip2n = ip => ip.split(`.`).reduce((a, x) => a * 256 + (+x), 0);
+const plen = p => +p.split(`/`)[1];
+const match = (ip, p) => { const l = plen(p);
+  return Math.floor(ip2n(ip) / Math.pow(2, 32 - l)) === Math.floor(ip2n(p.split(`/`)[0]) / Math.pow(2, 32 - l)); };
+
+/* --- simulation d'un paquet --- */
+function simuler(dst) {
+  const hops = []; let at = S.entree, labels = [];
+  for (let k = 0; k < 20; k++) {
+    const h = { at, inLabels: [...labels] };
+    if (labels.length) {
+      const top = labels[labels.length - 1];
+      const f = S.fecs.find(f => inLab(at, f) === top);
+      h.lookup = `label`;
+      if (!S.routeurs[at].mpls || !f) { h.op = `drop`; hops.push(h); break; }
+      h.fec = f; const o = outLab(at, f);
+      if (o === `pop`) { labels = labels.slice(0, -1); h.op = `pop`; }
+      else if (o === `untag`) { labels = []; h.op = `untag`; }
+      else { labels = [...labels.slice(0, -1), o]; h.op = `swap`; }
+      h.outLabels = [...labels];
+      const n = nhF(at, f);
+      if (!n) { h.deliver = true; h.op = `pop`; hops.push(h); break; }
+      h.nh = n; hops.push(h); at = n; continue;
+    }
+    const cands = S.fecs.filter(f => match(dst, F(f).prefixe)).sort((a, b) => plen(F(b).prefixe) - plen(F(a).prefixe));
+    h.lookup = `ip`; h.cands = cands;
+    if (!cands.length) { h.op = `drop`; hops.push(h); break; }
+    const f = cands[0]; h.fec = f;
+    if (F(f).routeur === at) { h.op = `deliver`; h.deliver = true; h.outLabels = []; hops.push(h); break; }
+    const n = nhF(at, f);
+    const o = S.routeurs[at].mpls ? outLab(at, f) : null;
+    if (typeof o === `number`) { labels = [o]; h.op = `push`; } else h.op = `ip`;
+    h.outLabels = [...labels]; h.nh = n; hops.push(h); at = n;
+  }
+  return hops;
+}
+
+/* --- textes générés --- */
+const L = x => `<span class="L">${x}</span>`;
+const B = x => `<b>${x}</b>`;
+const pf = f => F(f).prefixe;
+const sommet = a => a[a.length - 1];
+
+function txtHop(h, dst) {
+  const R = B(h.at), p = h.fec ? pf(h.fec) : ``;
+  switch (h.op) {
+    case `push`: {
+      const autres = h.cands.length > 1 ? ` (plus précis que ${h.cands.slice(1).map(pf).join(`, `)}, qui correspond aussi)` : ``;
+      return `${R} reçoit un paquet ${B(`IP`)} (sans label). Il cherche ${dst} dans la colonne <i>FEC</i> ; le ${B(`plus long préfixe`)} correspondant est ${B(p)}${autres}.
+              → ${B(`PUSH`)} ${L(sommet(h.outLabels))}, envoi à ${h.nh} (${intfF(h.at, h.fec)}).`;
+    }
+    case `swap`:
+      return `${R} reçoit un paquet étiqueté ${L(sommet(h.inLabels))}. Il cherche ${sommet(h.inLabels)} dans la colonne <i>Label entrant</i>, ${B(`sans lire l'adresse IP`)}.
+              → ${B(`SWAP`)} ${L(sommet(h.inLabels))} → ${L(sommet(h.outLabels))}, envoi à ${h.nh} (${intfF(h.at, h.fec)}). ${h.nh} attend bien ${sommet(h.outLabels)} : c'est son label entrant pour ${p}.`;
+    case `pop`:
+      if (h.deliver)
+        return `${R} reçoit ${L(sommet(h.inLabels))} ; label sortant « pop ». ${R} est la sortie : il retire le label, puis fait une recherche IP classique : ${p} est directement connecté (${intfF(h.at, h.fec)}).`;
+      return `${R} reçoit ${L(sommet(h.inLabels))} ; label sortant « pop » → ${B(`POP`)} : le label est retiré et le paquet part en IP vers ${h.nh}.
+              ${h.nh} est la sortie pour ${p} et a annoncé « pop » : inutile de lui envoyer un label qu'il retirerait aussitôt (retrait à l'avant-dernier saut).`;
+    case `untag`:
+      return `${R} reçoit ${L(sommet(h.inLabels))} ; label sortant « untag » : son next hop ${h.nh} ${B(`ne parle pas MPLS`)}.
+              → ${B(`UNTAG`)} : tous les labels sont retirés et le paquet part en IP vers ${h.nh}.`;
+    case `deliver`:
+      return `${R} reçoit un paquet ${B(`IP`)} : routage IP classique. ${p} est directement connecté (${intfF(h.at, h.fec) || F(h.fec).intf}) : le paquet est remis au réseau.`;
+    case `ip`:
+      return `${R} ${S.routeurs[h.at].mpls ? `` : `(sans MPLS) `}fait du routage IP classique pour ${dst} : envoi à ${h.nh}.`;
+    case `drop`:
+      return h.lookup === `label`
+        ? `${R} reçoit ${L(sommet(h.inLabels))} : aucune ligne avec ce label entrant → paquet ${B(`jeté`)}.`
+        : `${R} n'a aucune route pour ${dst} → paquet ${B(`jeté`)}.`;
+  }
+}
+function txtQuestion(h, dst) {
+  if (h.inLabels.length)
+    return `${B(h.at)} reçoit un paquet étiqueté ${L(sommet(h.inLabels))}. Quelle ligne de sa FLIB utilise-t-il ? Avec quel label le paquet repart-il ?`;
+  return `${B(h.at)} reçoit un paquet IP vers ${B(dst)}. Quelle ligne de sa FLIB utilise-t-il ? Quel label met-il ?`;
+}
+const BADGE = h => ({
+  push: `PUSH ${sommet(h.outLabels)}`, swap: `SWAP ${sommet(h.inLabels)} → ${sommet(h.outLabels)}`,
+  pop: h.deliver ? `POP + ROUTAGE IP` : `POP`, untag: `UNTAG`, deliver: `ROUTAGE IP`, ip: `ROUTAGE IP`, drop: `JETÉ`,
+}[h.op]);
+
+/* --- état et construction des étapes --- */
+function etatInitial() {
+  return { section: ``, titre: S.titre, caption: ``, question: false, grand: false, vue: `aucune`,
+           vis: {}, focus: null, hlRow: [], hlCells: [], newCells: [], act: [],
+           pkt: null, envs: [], hlNodes: [], badge: null, overlay: null };
+}
+function remiseAZero(s) {
+  s.question = false; s.grand = false; s.hlRow = []; s.hlCells = []; s.newCells = []; s.act = [];
+  s.envs = []; s.hlNodes = []; s.badge = null; s.overlay = null;
+  if (s.pkt) s.pkt = { ...s.pkt, fx: null };
+}
+const voir = (s, r, f, col) => { s.vis[r] = s.vis[r] || {}; s.vis[r][f] = s.vis[r][f] || {}; s.vis[r][f][col] = true; };
+
+const STEPS = [], SECTIONS = [];
+let pktId = 0;
+function etape(fn) { STEPS.push(fn); }
+
+SCENARIO.forEach(b => {
+  if (b.section) SECTIONS.push({ nom: b.section, debut: STEPS.length });
+  const sec = b.section;
+  const avecSection = fn => s => { if (sec) s.section = sec; fn(s); };
+
+  if (b.type === `texte`) {
+    etape(avecSection(s => { s.titre = b.titre; s.caption = b.texte; s.vue = b.vue === `flib` ? `flib` : `aucune`;
+      s.grand = s.vue === `aucune`; s.pkt = null; }));
+  }
+
+  else if (b.type === `paquet`) {
+    const hops = simuler(b.dst), id = ++pktId, q = b.questions || [];
+    const titre = `Un paquet vers ${b.dst}`;
+    etape(avecSection(s => {
+      s.titre = titre; s.vue = `flib`; s.focus = null;
+      s.pkt = { id, at: `A`, labels: [], dst: b.dst, fx: null };
+      s.caption = `Un hôte du réseau ${pf(`A`)} envoie un paquet IP vers ${B(b.dst)}. Il entre dans le domaine MPLS par ${S.entree}.`;
+    }));
+    hops.forEach(h => {
+      if (q.includes(h.at)) etape(s => {
+        s.titre = titre; s.question = true; s.hlNodes = [h.at]; s.act = [h.at];
+        s.pkt = { id, at: h.at, labels: h.inLabels, dst: b.dst, fx: null };
+        s.caption = txtQuestion(h, b.dst);
+      });
+      etape(s => {
+        s.titre = titre; s.hlNodes = [h.at];
+        s.pkt = { id, at: h.at, labels: h.outLabels || [], dst: b.dst, fx: { op: h.op, avant: h.inLabels } };
+        s.caption = txtHop(h, b.dst);
+        s.badge = { at: h.at, text: BADGE(h), op: h.op };
+        if (h.fec && S.routeurs[h.at].mpls) {
+          s.act = [h.at];
+          s.hlRow = [{ r: h.at, f: h.fec }];
+          if (h.op !== `deliver` && h.op !== `drop`)
+            s.hlCells = [{ r: h.at, f: h.fec, col: h.lookup === `ip` ? `fec` : `in`, k: `hl` }, { r: h.at, f: h.fec, col: `out`, k: `hl` }];
+          if (h.nh && S.routeurs[h.nh].mpls && (h.op === `swap` || h.op === `push`))
+            s.hlCells.push({ r: h.nh, f: h.fec, col: `in`, k: `peer` });
+        }
+      });
+    });
+    const fin = sommet(hops);
+    if (fin.deliver) etape(s => {
+      s.titre = titre;
+      s.pkt = { id, at: fin.fec, labels: [], dst: b.dst, fx: null };
+      const lecteurs = hops.filter(h => h.lookup === `ip` || h.deliver).map(h => h.at);
+      s.caption = `Paquet livré dans ${pf(fin.fec)}. Adresse IP lue par : ${B(lecteurs.join(`, `))}.
+                   Les autres routeurs n'ont lu ${B(`que le label`)}.`;
+    });
+  }
+
+  else if (b.type === `retenir`) {
+    etape(avecSection(s => { s.overlay = b; s.titre = b.titre; s.pkt = null; }));
+  }
+
+  else if (b.type === `ldp-debut`) {
+    etape(avecSection(s => {
+      s.titre = `D'où viennent les labels ?`; s.vue = `ldp`; s.vis = {}; s.pkt = null; s.focus = null;
+      s.caption = b.texte || `On repart des FLIB vides. Les colonnes ${B(`FEC`)}, ${B(`Next hop`)} et ${B(`Interface`)}
+        viennent de la ${B(`table de routage IP`)} (OSPF). Le protocole ${B(`LDP`)} sert à remplir les deux colonnes de labels.`;
+    }));
+  }
+
+  else if (b.type === `ldp-labels-locaux`) {
+    etape(avecSection(s => {
+      s.titre = `LDP, étape 1 : chacun choisit ses labels locaux`;
+      LSR.forEach(r => S.fecs.forEach(f => { voir(s, r, f, `in`); s.newCells.push({ r, f, col: `in` });
+        if (r === F(f).routeur) voir(s, r, f, `out`); }));
+      s.caption = b.texte || `Chaque LSR choisit ${B(`seul`)} un label pour chaque préfixe de sa table de routage : c'est son
+        ${B(`label entrant`)} (« pour ce préfixe, envoyez-moi ce label »). Signification ${B(`locale`)} : deux routeurs peuvent choisir le même numéro.` +
+        (S.PHP ? ` Pour un réseau ${B(`directement connecté`)}, le routeur demande au contraire qu'on ne lui mette pas de label : il annonce ${B(`pop`)}.` : ``);
+    }));
+  }
+
+  else if (b.type === `ldp`) {
+    const f = b.fec, p = pf(f), q = b.questions || [];
+    const dist = {};
+    const d = r => { if (r in dist) return dist[r]; const n = nhF(r, f);
+      return dist[r] = (!n || !S.routeurs[n].mpls) ? 0 : d(n) + 1; };
+    LSR.forEach(d);
+    const max = Math.max(...LSR.map(r => dist[r]));
+    const acquis = [];   // cellules « out » déjà remplies
+    for (let k = 0; k <= max; k++) {
+      const emetteurs = LSR.filter(r => dist[r] === k);
+      const envs = [];
+      emetteurs.forEach(e => adj[e].filter(a => S.routeurs[a.v].mpls).forEach(a =>
+        envs.push({ from: e, to: a.v, fec: f, lab: inLab(e, f), ok: nhF(a.v, f) === e })));
+      const untags = emetteurs.filter(r => r !== F(f).routeur && outLab(r, f) === `untag`);
+      const recepteurs = [...new Set(envs.map(x => x.to))];
+      const titre = `LDP : annonces pour ${p}`;
+      const intro = `${emetteurs.map(B).join(` et `)} ${emetteurs.length > 1 ? `annoncent leur label` : `annonce son label`} pour ${B(p)} à ${B(`tous`)} ${emetteurs.length > 1 ? `leurs` : `ses`} voisins LDP` +
+        (emetteurs.length === 1 ? ` : ${L(inLab(emetteurs[0], f))}.` : ` (${emetteurs.map(e => `${e} : ${L(inLab(e, f))}`).join(`, `)}).`);
+      const verdicts = recepteurs.map(r => {
+        const ok = envs.filter(x => x.to === r && x.ok), no = envs.filter(x => x.to === r && !x.ok);
+        let t = ``;
+        if (ok.length) t += `<span class="ok">✓</span> ${B(r)} garde ${L(ok[0].lab)} de ${ok[0].from}, son next hop → label sortant ${L(annonce(ok[0].lab))}. `;
+        if (no.length) t += `<span class="no">✗</span> ${B(r)} ignore ${no.map(x => `${L(x.lab)} de ${x.from}`).join(`, `)} : ` +
+          (r === F(f).routeur ? `${p} lui est directement connecté. ` : `son next hop est ${nhF(r, f)}. `);
+        return t;
+      }).join(``);
+      const untagTxt = untags.map(r => `${B(r)} : son next hop ${nhF(r, f)} ne parle pas LDP → label sortant ${B(`untag`)}. `).join(``);
+      const avecQ = recepteurs.find(r => q.includes(r) && envs.some(x => x.to === r && x.ok));
+      if (avecQ) etape(s => {
+        s.titre = titre; s.focus = f; s.question = true; s.hlNodes = [avecQ]; s.act = [avecQ];
+        s.envs = envs.map(x => ({ ...x, verdict: null }));
+        const recus = envs.filter(x => x.to === avecQ);
+        s.caption = `${intro} ${B(avecQ)} reçoit ${recus.map(x => `${L(x.lab)} de ${x.from}`).join(` et `)}.
+                     Que met-il dans sa colonne « label sortant » pour ${p} ?`;
+      });
+      const nouveaux = [...envs.filter(x => x.ok).map(x => ({ r: x.to })), ...untags.map(r => ({ r }))];
+      const deja = [...acquis];
+      etape(s => {
+        s.titre = titre; s.focus = f; s.hlNodes = emetteurs;
+        deja.forEach(c => voir(s, c.r, f, `out`));
+        nouveaux.forEach(c => { voir(s, c.r, f, `out`); s.newCells.push({ r: c.r, f, col: `out` });
+          s.hlCells.push({ r: c.r, f, col: `out`, k: `hl` }); });
+        envs.filter(x => x.ok).forEach(x => s.hlCells.push({ r: x.from, f, col: `in`, k: `peer` }));
+        s.act = nouveaux.map(c => c.r);
+        s.envs = envs.map(x => ({ ...x, verdict: x.ok ? `ok` : `no` }));
+        s.caption = `${avecQ ? `` : intro + ` `}${untagTxt}${verdicts}` +
+          (!nouveaux.length ? `Personne n'a ${emetteurs.join(`, `)} comme next hop vers ${p} : ces annonces ne servent pas.` : ``);
+      });
+      acquis.push(...nouveaux);
+    }
+  }
+
+  else if (b.type === `ldp-autres`) {
+    etape(avecSection(s => {
+      s.titre = `Même procédure pour chaque préfixe`; s.focus = null;
+      const vuAvant = JSON.parse(JSON.stringify(s.vis));
+      LSR.forEach(r => S.fecs.forEach(f => {
+        const deja = s.vis[r] && s.vis[r][f] && s.vis[r][f].out;
+        voir(s, r, f, `in`); voir(s, r, f, `out`);
+        if (!deja) s.newCells.push({ r, f, col: `out` });
+      }));
+      const speciaux = [];
+      LSR.forEach(r => S.fecs.forEach(f => {
+        const o = outLab(r, f);
+        if (r !== F(f).routeur && (o === `pop` || o === `untag`) && !(vuAvant[r] && vuAvant[r][f] && vuAvant[r][f].out)) {
+          s.hlCells.push({ r, f, col: `out`, k: `hl` });
+          speciaux.push(o === `pop`
+            ? `${B(`pop`)} chez ${r} pour ${pf(f)} (son next hop ${nhF(r, f)} est la sortie et annonce « pop »)`
+            : `${B(`untag`)} chez ${r} pour ${pf(f)} (son next hop ${nhF(r, f)} ne parle pas MPLS)`);
+        }
+      }));
+      s.caption = b.texte || `Les FLIB sont maintenant complètes, ce sont celles de la partie 1. Cas particuliers à repérer : ${speciaux.join(` ; `)}.`;
+    }));
+  }
+});
+
+/* ======================================================================
+   AFFICHAGE
+   ====================================================================== */
+if (typeof document !== `undefined`) {
+const $ = id => document.getElementById(id);
+const stage = $(`stage`), svg = $(`topo`), layer = $(`layer`);
+const NS = `http://www.w3.org/2000/svg`;
+const pos = n => S.routeurs[n] || S.reseaux[n];
+document.title = S.titre;
+
+function el(tag, attrs, parent, txt) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (txt !== undefined) e.textContent = txt;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+/* --- dessin statique de la topologie --- */
+(function dessiner() {
+  const xs = LSR.map(r => S.routeurs[r].x), ys = LSR.map(r => S.routeurs[r].y);
+  const g0 = el(`g`, { class: `dom` }, svg);
+  el(`rect`, { x: Math.min(...xs) - 70, y: Math.min(...ys) - 40, width: Math.max(...xs) - Math.min(...xs) + 140,
+               height: Math.max(...ys) - Math.min(...ys) + 80, rx: 28 }, g0);
+  el(`text`, { x: Math.min(...xs) - 56, y: Math.min(...ys) - 24 }, g0, `DOMAINE MPLS`);
+  Object.values(S.reseaux).forEach(n => {
+    const r = S.routeurs[n.routeur];
+    el(`line`, { x1: r.x, y1: r.y, x2: n.x, y2: n.y, class: `lnk-net` }, svg);
+  });
+  S.liens.forEach(([a, ia, b, ib, net, c]) => {
+    const A = S.routeurs[a], Bb = S.routeurs[b];
+    el(`line`, { x1: A.x, y1: A.y, x2: Bb.x, y2: Bb.y, class: `lnk` }, svg);
+    const mx = (A.x + Bb.x) / 2, my = (A.y + Bb.y) / 2;
+    const dx = Bb.x - A.x, dy = Bb.y - A.y, len = Math.hypot(dx, dy);
+    const ox = -dy / len * 13, oy = dx / len * 13;
+    el(`text`, { x: mx + ox, y: my + oy + 4, class: `lbl-lien` }, svg, net);
+    [[A, dx, dy, ia], [Bb, -dx, -dy, ib]].forEach(([P, ddx, ddy, i]) =>
+      el(`text`, { x: P.x + ddx / len * 36, y: P.y + ddy / len * 36 - 7, class: `lbl-if` }, svg, i));
+  });
+  Object.entries(S.reseaux).forEach(([k, n]) => {
+    const g = el(`g`, { class: `net` }, svg);
+    const w = n.prefixe.length * 7.4 + 22;
+    el(`rect`, { x: n.x - w / 2, y: n.y - 14, width: w, height: 28, rx: 14 }, g);
+    el(`text`, { x: n.x, y: n.y }, g, n.prefixe);
+  });
+  RT.forEach(r => {
+    const R = S.routeurs[r];
+    const g = el(`g`, { class: `rt ` + (R.mpls ? `r-mpls` : `r-ip`) }, svg);
+    el(`circle`, { cx: R.x, cy: R.y, r: 22 }, g);
+    el(`text`, { x: R.x, y: R.y }, g, r);
+    if (!R.mpls) el(`text`, { x: R.x, y: R.y + 58, class: `r-sous` }, svg, `sans MPLS`);
+  });
+  el(`g`, { id: `dyn` }, svg);
+})();
+
+/* --- en-tête : boutons de section --- */
+SECTIONS.forEach(sc => {
+  const bt = document.createElement(`button`);
+  bt.textContent = sc.nom; bt.onclick = () => aller(sc.debut, false);
+  sc.bt = bt; $(`sections`).appendChild(bt);
+});
+
+/* --- FLIB --- */
+const CARD_W = 246, GAP = 8, x0 = (1280 - LSR.length * CARD_W - (LSR.length - 1) * GAP) / 2;
+const ordre = [...LSR].sort((a, b) => S.routeurs[a].x - S.routeurs[b].x || S.routeurs[a].y - S.routeurs[b].y);
+function cartes(s) {
+  const box = $(`cards`);
+  if (s.vue === `aucune`) { box.innerHTML = ``; return; }
+  const has = (list, r, f, col) => list.some(c => c.r === r && c.f === f && (!col || c.col === col));
+  const cls = (r, f, col) => {
+    const c = s.hlCells.find(c => c.r === r && c.f === f && c.col === col);
+    return (c ? (c.k === `peer` ? ` cel-peer` : ` cel-hl`) : ``) + (has(s.newCells, r, f, col) ? ` new` : ``);
+  };
+  const visible = (r, f, col) => s.vue === `flib` || (s.vis[r] && s.vis[r][f] && s.vis[r][f][col]);
+  box.innerHTML = ordre.map((r, i) => {
+    const lignes = S.fecs.map(f => {
+      const vi = visible(r, f, `in`), vo = visible(r, f, `out`);
+      const li = inLab(r, f), lo = outLab(r, f), nh = nhIP(r, f);
+      const trc = (has(s.hlRow, r, f) ? `hl` : ``) + (s.focus && s.focus !== f ? ` dim` : ``);
+      return `<tr class="${trc}">
+        <td class="${vi ? `lab` : `vide`}${cls(r, f, `in`)}">${vi ? li : `…`}</td>
+        <td class="rt${cls(r, f, `fec`)}">${pf(f)}</td>
+        <td class="${vo ? `lab` : `vide`}${cls(r, f, `out`)}">${vo ? lo : `…`}</td>
+        <td class="rt nh${nh === `connecté` ? ` sm` : ``}">${nh}</td>
+        <td class="rt">${intfF(r, f)}</td></tr>`;
+    }).join(``);
+    return `<div class="card${s.act.includes(r) ? ` act` : ``}" style="left:${x0 + i * (CARD_W + GAP)}px">
+      <h3>${r}<span>FLIB</span></h3>
+      <table><colgroup><col class="c-in"><col class="c-fec"><col class="c-out"><col class="c-nh"><col class="c-if"></colgroup>
+      <tr><th>Label<br>entrant</th><th>FEC</th><th>Label<br>sortant</th><th>Next<br>hop</th><th>Intf</th></tr>${lignes}</table></div>`;
+  }).join(``);
+}
+
+/* --- paquet --- */
+let pktEl = null, pktCur = null;
+function paquet(s, anim) {
+  if (!s.pkt) { if (pktEl) pktEl.style.opacity = 0; pktCur = null; return; }
+  if (!pktEl) { pktEl = document.createElement(`div`); pktEl.id = `pkt`; layer.appendChild(pktEl); }
+  const P = pos(s.pkt.at), nouveau = !pktCur || pktCur !== s.pkt.id;
+  if (nouveau || !anim) { pktEl.style.transition = `none`; }
+  pktEl.style.transform = `translate(${P.x}px,${P.y}px)`;
+  pktEl.style.opacity = 1;
+  if (nouveau || !anim) { void pktEl.offsetWidth; pktEl.style.transition = ``; }
+  pktCur = s.pkt.id;
+  // labels à gauche du paquet IP, sur la même ligne : le plus à gauche est le sommet de la pile
+  const fx = anim ? s.pkt.fx : null, BAS = 30, LW = 44, GAPL = 3;
+  let h = `<div class="b ipb" style="bottom:${BAS}px"><span class="hd">IPdst: ${s.pkt.dst}</span><span class="pl"></span></div>`;
+  const y = i => `${BAS}px;left:${-75 - (i + 1) * (LW + GAPL)}`;
+  const avant = fx ? fx.avant : [], apres = s.pkt.labels;
+  apres.forEach((l, i) => {
+    let c = ``;
+    if (fx && (fx.op === `push` || fx.op === `swap`) && i === apres.length - 1) c = ` fx-in`;
+    h += `<div class="b lab${c}" style="bottom:${y(i)}px">${l}</div>`;
+  });
+  if (fx && (fx.op === `swap` || fx.op === `pop` || fx.op === `untag`))
+    avant.forEach((l, i) => {
+      if (fx.op === `untag` || i === avant.length - 1)
+        h += `<div class="b lab fx-out" style="bottom:${y(i)}px">${l}</div>`;
+    });
+  pktEl.innerHTML = h;
+}
+
+/* --- rendu complet --- */
+let cur = -1;
+function rendu(i, anim) {
+  const s = (() => { const st = etatInitial(); for (let k = 0; k <= i; k++) { remiseAZero(st); STEPS[k](st); } return st; })();
+  stage.classList.toggle(`noanim`, !anim);
+  $(`titre`).textContent = s.titre;
+  $(`cpt`).textContent = `${i + 1} / ${STEPS.length}`;
+  $(`progress`).style.width = `${(i + 1) / STEPS.length * 100}%`;
+  SECTIONS.forEach(sc => sc.bt.classList.toggle(`on`, sc.nom === s.section));
+
+  const cap = $(`caption`);
+  cap.innerHTML = s.caption; cap.className = (s.question ? `question` : ``) + (s.grand ? ` grand` : ``);
+
+  const dyn = svg.querySelector(`#dyn`); dyn.innerHTML = ``;
+  s.hlNodes.forEach(n => { const P = pos(n); el(`circle`, { cx: P.x, cy: P.y, r: 29, class: `glow` }, dyn); });
+
+  cartes(s);
+  paquet(s, anim);
+
+  layer.querySelectorAll(`.env,.badge`).forEach(e => e.remove());
+  if (s.badge) {
+    const P = pos(s.badge.at), d = document.createElement(`div`);
+    d.className = `badge op-${s.badge.op}` + (anim ? ` anim` : ``);
+    d.style.left = P.x + `px`; d.style.top = (P.y + 28) + `px`; d.textContent = s.badge.text;
+    layer.appendChild(d);
+  }
+  s.envs.forEach(x => {
+    const A = pos(x.from), Bp = pos(x.to);
+    const tx = A.x + (Bp.x - A.x) * .6, ty = A.y + (Bp.y - A.y) * .6;
+    const d = document.createElement(`div`);
+    d.className = `env`;
+    d.innerHTML = `<div class="in">${pf(x.fec)} → <b>${x.lab}</b><span class="v">${x.verdict === `ok` ? `✓` : x.verdict === `no` ? `✗` : ``}</span></div>`;
+    layer.appendChild(d);
+    if (anim) {
+      d.style.transform = `translate(${A.x}px,${A.y}px)`;
+      void d.offsetWidth;
+      requestAnimationFrame(() => { d.style.transform = `translate(${tx}px,${ty}px)`; if (x.verdict) d.classList.add(x.verdict); });
+    } else {
+      d.style.transform = `translate(${tx}px,${ty}px)`; if (x.verdict) d.classList.add(x.verdict);
+    }
+  });
+
+  const ov = $(`overlay`);
+  if (s.overlay) {
+    ov.innerHTML = `<div class="box"><h2>${s.overlay.titre}</h2><ul>${s.overlay.points.map(p => `<li>${p}</li>`).join(``)}</ul>
+      ${s.overlay.td ? `<div class="td">${s.overlay.td}</div>` : ``}</div>`;
+    ov.classList.add(`on`);
+  } else ov.classList.remove(`on`);
+
+  if (!anim) requestAnimationFrame(() => requestAnimationFrame(() => stage.classList.remove(`noanim`)));
+  cur = i;
+  try { history.replaceState(null, ``, `#${i + 1}`); } catch (e) {}
+}
+function aller(i, anim) { i = Math.max(0, Math.min(STEPS.length - 1, i)); if (i !== cur) rendu(i, anim); }
+
+document.addEventListener(`keydown`, e => {
+  if ([`ArrowRight`, ` `, `PageDown`, `Enter`].includes(e.key)) { e.preventDefault(); aller(cur + 1, true); }
+  else if ([`ArrowLeft`, `PageUp`, `Backspace`].includes(e.key)) { e.preventDefault(); aller(cur - 1, false); }
+  else if (e.key === `Home`) aller(0, false);
+  else if (e.key === `End`) aller(STEPS.length - 1, false);
+});
+$(`next`).onclick = () => aller(cur + 1, true);
+$(`prev`).onclick = () => aller(cur - 1, false);
+
+function echelle() {
+  const k = Math.min(innerWidth / 1280, innerHeight / 720);
+  stage.style.transform = `translate(-50%,-50%) scale(${k})`;
+}
+addEventListener(`resize`, echelle); echelle();
+const h0 = parseInt(location.hash.slice(1), 10);
+rendu(isNaN(h0) ? 0 : Math.max(0, Math.min(STEPS.length - 1, h0 - 1)), false);
+}
+</script>
+</body>
+</html>
